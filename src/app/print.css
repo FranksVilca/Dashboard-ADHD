@@ -1,0 +1,34 @@
+/* Print styles to hide sidebar and interactive elements */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  .sidebar {
+    display: none !important;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+    padding: 0 !important;
+  }
+
+  .patient-layout {
+    width: 100% !important;
+  }
+
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  
+  .card {
+    box-shadow: none !important;
+    border: 1px solid #e2e8f0 !important;
+    break-inside: avoid;
+  }
+
+  .print-header {
+    display: block !important;
+  }
+}
