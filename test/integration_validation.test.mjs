@@ -1383,4 +1383,33 @@ test("Suite de Validación de Integración: Cognitrain_Dashboard <-> cognitrain_
     assert.ok(ic !== undefined);
     assert.ok(ic.score >= 90);
   });
+
+  await t.test("26. Registro Directo de Psicólogo y Asignación de Alumnos Reales", async () => {
+    const { DashboardAuthService } = await import("../src/lib/authService.ts");
+    DashboardAuthService.initSystemAccounts();
+
+    // 1. Verificar que psy_01 tiene los alumnos reales de Firestore asignados
+    const psys = DashboardAuthService.getAllPsychologists();
+    const sofia = psys.find((p) => p.id === "psy_01");
+    assert.ok(sofia !== undefined);
+    assert.ok(sofia.assignedStudentIds.includes("d335f7b7-c5f9-4de5-b9f1-8cd5e9e51eba"));
+    assert.ok(sofia.assignedStudentIds.includes("d76c2ba1-e9f4-4c20-975c-51b96ad94bae"));
+
+    // 2. Probar registro directo de nuevo psicólogo
+    const uniqueUser = `psy_${Date.now()}`;
+    const registered = await DashboardAuthService.registerPsychologist({
+      name: "Dr. Fernando Morales",
+      username: uniqueUser,
+      password: "Password2026!",
+      email: `${uniqueUser}@cognitrain.edu`,
+      licenseNumber: "CPP-45912",
+    });
+
+    assert.equal(registered.name, "Dr. Fernando Morales");
+    assert.equal(registered.username, uniqueUser);
+    assert.equal(registered.role, "psychologist");
+    assert.ok(registered.passwordHash.length > 20);
+    assert.ok(registered.assignedStudentIds.length > 0);
+    assert.ok(registered.assignedStudentIds.includes("d335f7b7-c5f9-4de5-b9f1-8cd5e9e51eba"));
+  });
 });

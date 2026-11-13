@@ -155,6 +155,15 @@ export class DashboardAuthService {
   static initSystemAccounts(): void {
     const users = this.getLocalUsers();
 
+    const realStudentIds = [
+      "d335f7b7-c5f9-4de5-b9f1-8cd5e9e51eba", // Inatento
+      "d76c2ba1-e9f4-4c20-975c-51b96ad94bae", // Hiperactivo
+      "82c544e1-0f95-4491-82b7-dc8d969cf1a7", // David
+      "b22c9033-f949-4166-94e3-d0792362c74a", // Combinado
+      "7140ea21-218c-4335-946f-effd918ec08b", // Yeltsin
+      "9e7d226b-05d3-454b-9bc4-68824dfc5a97", // Joselyn
+    ];
+
     const initialUsers: DashboardUser[] = [
       {
         id: "admin_01",
@@ -180,7 +189,7 @@ export class DashboardAuthService {
         status: "active",
         createdAt: new Date().toISOString(),
         licenseNumber: "CPP-18492",
-        assignedStudentIds: ["ALU-1001"], // Asignación inicial de ejemplo
+        assignedStudentIds: realStudentIds,
         linkedStudentIds: [],
       },
       {
@@ -208,7 +217,7 @@ export class DashboardAuthService {
         status: "active",
         createdAt: new Date().toISOString(),
         assignedStudentIds: [],
-        linkedStudentIds: ["ALU-1001"],
+        linkedStudentIds: ["d76c2ba1-e9f4-4c20-975c-51b96ad94bae"],
         phone: "+51 987 654 321",
       },
     ];
@@ -225,7 +234,7 @@ export class DashboardAuthService {
       return;
     }
 
-    // Asegurar que las cuentas seed existan y tengan sus credenciales actualizadas
+    // Asegurar que las cuentas seed existan y tengan sus credenciales y asignaciones reales actualizadas
     let updated = false;
     for (const seed of initialUsers) {
       const idx = users.findIndex((u) => u.id === seed.id || u.email.toLowerCase() === seed.email.toLowerCase());
@@ -234,12 +243,18 @@ export class DashboardAuthService {
         updated = true;
       } else {
         const existing = users[idx];
-        if (!existing.username || !existing.passwordHash) {
+        const hasLegacyPlaceholder = existing.assignedStudentIds?.includes("ALU-1001") || existing.linkedStudentIds?.includes("ALU-1001");
+        const needsStudentUpdate = (seed.id === "psy_01" && (!existing.assignedStudentIds || existing.assignedStudentIds.length === 0 || hasLegacyPlaceholder)) ||
+                                   (seed.id === "tutor_01" && (!existing.linkedStudentIds || existing.linkedStudentIds.length === 0 || hasLegacyPlaceholder));
+
+        if (!existing.username || !existing.passwordHash || needsStudentUpdate) {
           users[idx] = {
             ...existing,
             username: existing.username || seed.username,
             passwordHash: existing.passwordHash || seed.passwordHash,
             passwordSalt: existing.passwordSalt || seed.passwordSalt,
+            assignedStudentIds: needsStudentUpdate && seed.id === "psy_01" ? realStudentIds : (existing.assignedStudentIds || seed.assignedStudentIds || []),
+            linkedStudentIds: needsStudentUpdate && seed.id === "tutor_01" ? ["d76c2ba1-e9f4-4c20-975c-51b96ad94bae"] : (existing.linkedStudentIds || seed.linkedStudentIds || []),
           };
           updated = true;
         }
@@ -447,6 +462,14 @@ export class DashboardAuthService {
     users.push(newUser);
     this.saveLocalUsers(users);
 
+    // Persistencia resiliente en Firestore para la nube
+    try {
+      const ref = doc(db, "dashboard_users", newUser.id);
+      setDoc(ref, newUser, { merge: true }).catch(() => {});
+    } catch {
+      // Ignorar si no hay conexión Firestore
+    }
+
     this.logAudit({
       action: "user_created",
       actorId: adminActor.id,
@@ -455,6 +478,101 @@ export class DashboardAuthService {
       targetUserId: newUser.id,
       targetUserName: newUser.name,
       details: `Alta de psicólogo: ${newUser.name} (usuario: @${newUser.username}, email: ${newUser.email}) con credenciales hasheadas`,
+    });
+
+    return newUser;
+  }
+
+  /**
+   * Registro directo de un nuevo profesional psicólogo.
+   * Valida unicidad de usuario y correo, realiza hashing criptográfico PBKDF2
+   * y asigna por defecto los alumnos de la plataforma para que su panel inicial contenga datos reales.
+   */
+  static async registerPsychologist(data: {
+    name: string;
+    username: string;
+    password?: string;
+    email: string;
+    licenseNumber?: string;
+    phone?: string;
+  }): Promise<DashboardUser> {
+    this.initSystemAccounts();
+
+    if (!data.name || !data.name.trim()) {
+      throw new Error("El nombre completo del profesional es obligatorio.");
+    }
+
+    const usernameValidation = validateUsername(data.username);
+    if (!usernameValidation.valid) {
+      throw new Error(usernameValidation.message || "Nombre de usuario inválido.");
+    }
+
+    const cleanUsername = data.username.trim().toLowerCase();
+    const cleanEmail = data.email.trim().toLowerCase();
+
+    const users = this.getLocalUsers();
+
+    const existingUsername = users.find((u) => u.username && u.username.toLowerCase() === cleanUsername);
+    if (existingUsername) {
+      throw new Error(`El nombre de usuario '${cleanUsername}' ya está registrado. Por favor elige otro.`);
+    }
+
+    const existingEmail = users.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (existingEmail) {
+      throw new Error("Ya existe un usuario registrado con este correo electrónico.");
+    }
+
+    const rawPassword = data.password?.trim() || "";
+    const passValidation = validatePasswordStrength(rawPassword);
+    if (!passValidation.valid) {
+      throw new Error(passValidation.message || "Contraseña inválida.");
+    }
+
+    const { hash, salt } = await hashPassword(rawPassword);
+
+    const defaultStudentUids = [
+      "d335f7b7-c5f9-4de5-b9f1-8cd5e9e51eba", // Inatento
+      "d76c2ba1-e9f4-4c20-975c-51b96ad94bae", // Hiperactivo
+      "82c544e1-0f95-4491-82b7-dc8d969cf1a7", // David
+      "b22c9033-f949-4166-94e3-d0792362c74a", // Combinado
+      "7140ea21-218c-4335-946f-effd918ec08b", // Yeltsin
+      "9e7d226b-05d3-454b-9bc4-68824dfc5a97", // Joselyn
+    ];
+
+    const newUser: DashboardUser = {
+      id: generateId("psy"),
+      name: data.name.trim(),
+      username: cleanUsername,
+      passwordHash: hash,
+      passwordSalt: salt,
+      email: cleanEmail,
+      role: "psychologist",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      licenseNumber: data.licenseNumber?.trim(),
+      phone: data.phone?.trim(),
+      assignedStudentIds: defaultStudentUids,
+      linkedStudentIds: [],
+    };
+
+    users.push(newUser);
+    this.saveLocalUsers(users);
+
+    try {
+      const ref = doc(db, "dashboard_users", newUser.id);
+      setDoc(ref, newUser, { merge: true }).catch(() => {});
+    } catch {
+      // Ignorar si no hay conexión Firestore
+    }
+
+    this.logAudit({
+      action: "user_created",
+      actorId: newUser.id,
+      actorName: newUser.name,
+      actorRole: "psychologist",
+      targetUserId: newUser.id,
+      targetUserName: newUser.name,
+      details: `Autorregistro de nuevo psicólogo: ${newUser.name} (@${newUser.username})`,
     });
 
     return newUser;
